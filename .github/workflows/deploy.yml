@@ -1,0 +1,98 @@
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 152.67.53.192 >> ~/.ssh/known_hosts
+
+      - name: Deploy to server
+        env:
+          DEPLOY_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          ssh -i ~/.ssh/id_rsa ubuntu@152.67.53.192 << 'EOF'
+          set -e
+
+          echo "🚀 Iniciando deploy do hub-backend..."
+
+          # Criar diretório se não existir
+          mkdir -p ~/hub-backend
+          cd ~/hub-backend
+
+          # Clonar/atualizar repositório
+          if [ -d ".git" ]; then
+            echo "📥 Atualizando repositório..."
+            git fetch origin
+            git reset --hard origin/main
+          else
+            echo "📥 Clonando repositório..."
+            git clone https://github.com/contatomarianesoares/hub-backend.git .
+          fi
+
+          # Instalar dependências
+          echo "📦 Instalando dependências..."
+          npm install
+
+          # Copiar .env se não existir
+          if [ ! -f ".env" ]; then
+            echo "⚙️  Criando .env com configurações padrão..."
+            cat > .env << 'ENVFILE'
+          PORT=3000
+          HOST=0.0.0.0
+          NODE_ENV=production
+          LOG_LEVEL=info
+
+          EVOLUTION_API_URL=http://152.67.53.192:8080/api
+          HUB_PUBLIC_URL=https://hub.jurialvo.com.br
+
+          SUPABASE_URL=https://your-supabase-url.supabase.co
+          SUPABASE_ANON_KEY=your_supabase_anon_key
+          SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+
+          DATABASE_URL=postgresql://user:password@localhost:5432/hub_db
+          ENVFILE
+          fi
+
+          # Instalar PM2 se não estiver
+          if ! command -v pm2 &> /dev/null; then
+            echo "⚙️  Instalando PM2..."
+            npm install -g pm2
+            pm2 startup
+            pm2 save
+          fi
+
+          # Parar e remover app anterior
+          echo "⏹️  Parando app anterior..."
+          pm2 stop hub-backend || true
+          pm2 delete hub-backend || true
+
+          # Iniciar novo app com PM2
+          echo "✅ Iniciando hub-backend com PM2..."
+          pm2 start npm --name "hub-backend" -- start
+          pm2 save
+
+          echo "🎉 Deploy concluído com sucesso!"
+          echo "📍 Status: $(pm2 status hub-backend | tail -1)"
+          EOF
+
+      - name: Verify deployment
+        run: |
+          echo "✅ Deployment iniciado no servidor"
+          echo "📍 Acesse: https://hub.jurialvo.com.br/health"
