@@ -3,91 +3,102 @@ const evolution = require('./evolutionClient');
 
 /**
  * Send a campaign to all recipients
- * @param {Object} campaign - Campaign data
- * @param {number} campaign.id - Campaign ID
- * @param {number} campaign.clientId - Hub client ID
- * @param {string} campaign.mensagem - Message text
+ * hub_contatos.campanha_id links contacts to campaigns
+ * hub_disparos: contato_id, step, status, evolution_message_id, enviado_at, erro_msg
+ *
+ * @param {Object} campaign - Campaign data from hub_campanhas
  * @returns {Promise<Object>} Campaign send result
  */
 async function sendCampaign(campaign) {
-  const { id: campaignId, clientId, mensagem } = campaign;
+  const { id: campaignId, cliente_id: clientId } = campaign;
 
   try {
     console.info(`[CAMPAIGN] Starting campaign ${campaignId} send`);
 
-    // Get recipients from database
-    const { data: recipients, error: recipientsError } = await supabase
+    // Get contatos linked to this campaign
+    const { data: contatos, error: contatosError } = await supabase
       .from('hub_contatos')
-      .select('id, telefone')
-      .eq('ativo', true)
-      .limit(1000);
+      .select('id, telefone, nome')
+      .eq('campanha_id', campaignId);
 
-    if (recipientsError) throw recipientsError;
+    if (contatosError) throw contatosError;
+
+    if (!contatos || contatos.length === 0) {
+      return { campaignId, totalRecipients: 0, sent: 0, failed: 0 };
+    }
+
+    // Use the cliente's evolution_instance_id
+    const { data: cliente, error: clienteError } = await supabase
+      .from('hub_clientes')
+      .select('id, evolution_instance_id')
+      .eq('id', clientId)
+      .single();
+
+    if (clienteError) throw clienteError;
+
+    const instanceName = cliente?.evolution_instance_id || `hub_${clientId}`;
 
     let sent = 0;
     let failed = 0;
 
-    // Send message to each recipient
-    for (const recipient of recipients || []) {
+    for (const contato of contatos) {
       try {
         const response = await evolution.enviarTexto({
-          clientId,
-          telefone: recipient.telefone,
-          mensagem,
+          clientId: instanceName,
+          telefone: contato.telefone,
+          mensagem: campaign.nome || 'Campanha',
         });
 
-        if (response?.data?.id) {
-          // Log disparo
-          const { error: insertError } = await supabase
-            .from('hub_disparos')
-            .insert({
-              campanha_id: campaignId,
-              contato_id: recipient.id,
-              cliente_id: clientId,
-              evolution_message_id: response.data.id,
-              status: 'enviando',
-            });
+        const evolutionMessageId = response?.data?.key?.id || response?.data?.id || null;
 
-          if (insertError) {
-            console.warn(`[CAMPAIGN] Failed to log disparo: ${insertError.message}`);
-          }
+        // Insert disparo record
+        const { error: insertError } = await supabase
+          .from('hub_disparos')
+          .insert({
+            contato_id: contato.id,
+            step: 1,
+            status: evolutionMessageId ? 'enviado' : 'erro',
+            evolution_message_id: evolutionMessageId,
+            enviado_at: new Date().toISOString(),
+            erro_msg: evolutionMessageId ? null : 'No message ID returned',
+          });
 
+        if (insertError) {
+          console.warn(`[CAMPAIGN] Failed to log disparo: ${insertError.message}`);
+        }
+
+        if (evolutionMessageId) {
           sent++;
-          console.info(`[CAMPAIGN] Message sent to ${recipient.telefone}`);
+          console.info(`[CAMPAIGN] Sent to ${contato.telefone}`);
         } else {
           failed++;
-          console.warn(`[CAMPAIGN] Failed to send to ${recipient.telefone}`);
+          console.warn(`[CAMPAIGN] No message ID for ${contato.telefone}`);
         }
       } catch (error) {
         failed++;
-        console.error(
-          `[CAMPAIGN] Error sending to ${recipient.telefone}: ${error.message}`
-        );
+        console.error(`[CAMPAIGN] Error sending to ${contato.telefone}: ${error.message}`);
       }
     }
 
-    console.info(
-      `[CAMPAIGN] Campaign ${campaignId} complete. Sent: ${sent}, Failed: ${failed}`
-    );
+    console.info(`[CAMPAIGN] Campaign ${campaignId} done. Sent: ${sent}, Failed: ${failed}`);
 
     return {
       campaignId,
-      totalRecipients: (recipients || []).length,
+      totalRecipients: contatos.length,
       sent,
       failed,
     };
   } catch (error) {
-    console.error(
-      `[CAMPAIGN] Error in sendCampaign: ${error.message}`,
-      error
-    );
+    console.error(`[CAMPAIGN] Error in sendCampaign: ${error.message}`, error);
     throw error;
   }
 }
 
 /**
  * Get campaign status with message statistics
- * @param {number} campaignId - Campaign ID
+ * Uses hub_contatos.campanha_id → hub_disparos.contato_id join
+ *
+ * @param {string} campaignId - Campaign UUID
  * @returns {Promise<Object>} Campaign status
  */
 async function getCampaignStatus(campaignId) {
@@ -95,40 +106,50 @@ async function getCampaignStatus(campaignId) {
     // Get campaign info
     const { data: campaign, error: campaignError } = await supabase
       .from('hub_campanhas')
-      .select('id, nome, status')
+      .select('id, nome, status, banco, desconto_max, evento_at')
       .eq('id', campaignId)
       .single();
 
     if (campaignError) throw campaignError;
     if (!campaign) return null;
 
-    // Get disparo counts grouped by status
-    const { data: disparos, error: disparosError } = await supabase
-      .from('hub_disparos')
-      .select('status')
+    // Get all contatos for this campaign
+    const { data: contatos, error: contatosError } = await supabase
+      .from('hub_contatos')
+      .select('id')
       .eq('campanha_id', campaignId);
 
-    if (disparosError) throw disparosError;
+    if (contatosError) throw contatosError;
 
-    const counts = { enviado: 0, entregue: 0, lido: 0, erro: 0 };
-    for (const d of disparos || []) {
-      if (counts[d.status] !== undefined) counts[d.status]++;
+    const contatoIds = (contatos || []).map(c => c.id);
+    let disparoCounts = { enviado: 0, erro: 0, pendente: 0, total: 0 };
+
+    if (contatoIds.length > 0) {
+      const { data: disparos, error: disparosError } = await supabase
+        .from('hub_disparos')
+        .select('status')
+        .in('contato_id', contatoIds);
+
+      if (!disparosError && disparos) {
+        disparoCounts.total = disparos.length;
+        for (const d of disparos) {
+          if (disparoCounts[d.status] !== undefined) disparoCounts[d.status]++;
+          else disparoCounts[d.status] = 1;
+        }
+      }
     }
 
     return {
       nome: campaign.nome,
       status: campaign.status,
-      total: (disparos || []).length,
-      enviado: counts.enviado,
-      entregue: counts.entregue,
-      lido: counts.lido,
-      erro: counts.erro,
+      banco: campaign.banco,
+      desconto_max: campaign.desconto_max,
+      evento_at: campaign.evento_at,
+      totalContatos: contatoIds.length,
+      disparos: disparoCounts,
     };
   } catch (error) {
-    console.error(
-      `[CAMPAIGN] Error getting status: ${error.message}`,
-      error
-    );
+    console.error(`[CAMPAIGN] Error getting status: ${error.message}`, error);
     throw error;
   }
 }

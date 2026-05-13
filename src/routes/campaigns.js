@@ -1,3 +1,4 @@
+const { supabase } = require('../database/connection');
 const campaignService = require('../services/campaignService');
 
 /**
@@ -11,17 +12,15 @@ async function sendCampaign(request, reply) {
     console.info(`[API] Send campaign request for campaign ${id}`);
 
     // Get campaign from database
-    const db = require('../database/connection').default;
-    const { rows: campaigns } = await db.query(
-      'SELECT * FROM hub_campanhas WHERE id = $1',
-      [id]
-    );
+    const { data: campaign, error } = await supabase
+      .from('hub_campanhas')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-    if (campaigns.length === 0) {
+    if (error || !campaign) {
       return reply.status(404).send({ error: 'Campaign not found' });
     }
-
-    const campaign = campaigns[0];
 
     // Send campaign asynchronously
     const result = await campaignService.sendCampaign(campaign);

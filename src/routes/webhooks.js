@@ -14,19 +14,23 @@ async function handleMessagesUpdate(payload) {
     // Map Evolution status to Hub status
     let updateData;
 
+    // hub_disparos valid statuses: pendente, enviado, erro
+    // Map Evolution statuses to hub statuses
     switch (messageStatus) {
+      case 'DELIVERY_ACK':
+      case 'delivered':
       case 'sent':
         updateData = { status: 'enviado' };
         break;
-      case 'delivered':
-        updateData = { status: 'entregue', entregue_at: new Date().toISOString() };
-        break;
+      case 'READ':
       case 'read':
-        updateData = { status: 'lido', lido_at: new Date().toISOString() };
+        updateData = { status: 'enviado' }; // mark as enviado (READ is a bonus update)
         break;
+      case 'ERROR':
       case 'error':
         updateData = { status: 'erro', erro_msg: 'Evolution reported error' };
         break;
+      case 'PENDING':
       case 'pending':
         console.info(`[WEBHOOK] Ignoring pending status for messageId=${messageId}`);
         return;
