@@ -23,7 +23,8 @@
     "@supabase/supabase-js": "^2.38.4",
     "axios": "^1.6.2",
     "dotenv": "^17.4.2",
-    "fastify": "^4.24.3"
+    "fastify": "^4.24.3",
+    "ws": "^8.14.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.1",

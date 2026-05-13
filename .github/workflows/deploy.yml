@@ -54,7 +54,7 @@ jobs:
           if [ ! -f ".env" ]; then
             echo "⚙️  Criando .env com configurações padrão..."
             cat > .env << 'ENVFILE'
-          PORT=3000
+          PORT=3002
           HOST=0.0.0.0
           NODE_ENV=production
           LOG_LEVEL=info
