@@ -1,4 +1,4 @@
-const db = require('../database/connection').default;
+const { supabase } = require('../database/connection');
 const evolution = require('./evolutionClient');
 
 /**
@@ -16,15 +16,19 @@ async function sendCampaign(campaign) {
     console.info(`[CAMPAIGN] Starting campaign ${campaignId} send`);
 
     // Get recipients from database
-    const { rows: recipients } = await db.query(
-      `SELECT id, telefone FROM hub_contatos WHERE ativo = true LIMIT 1000`
-    );
+    const { data: recipients, error: recipientsError } = await supabase
+      .from('hub_contatos')
+      .select('id, telefone')
+      .eq('ativo', true)
+      .limit(1000);
+
+    if (recipientsError) throw recipientsError;
 
     let sent = 0;
     let failed = 0;
 
     // Send message to each recipient
-    for (const recipient of recipients) {
+    for (const recipient of recipients || []) {
       try {
         const response = await evolution.enviarTexto({
           clientId,
@@ -34,11 +38,19 @@ async function sendCampaign(campaign) {
 
         if (response?.data?.id) {
           // Log disparo
-          await db.query(
-            `INSERT INTO hub_disparos (campanha_id, contato_id, cliente_id, evolution_message_id, status)
-             VALUES ($1, $2, $3, $4, 'enviando')`,
-            [campaignId, recipient.id, clientId, response.data.id]
-          );
+          const { error: insertError } = await supabase
+            .from('hub_disparos')
+            .insert({
+              campanha_id: campaignId,
+              contato_id: recipient.id,
+              cliente_id: clientId,
+              evolution_message_id: response.data.id,
+              status: 'enviando',
+            });
+
+          if (insertError) {
+            console.warn(`[CAMPAIGN] Failed to log disparo: ${insertError.message}`);
+          }
 
           sent++;
           console.info(`[CAMPAIGN] Message sent to ${recipient.telefone}`);
@@ -60,7 +72,7 @@ async function sendCampaign(campaign) {
 
     return {
       campaignId,
-      totalRecipients: recipients.length,
+      totalRecipients: (recipients || []).length,
       sent,
       failed,
     };
@@ -80,22 +92,37 @@ async function sendCampaign(campaign) {
  */
 async function getCampaignStatus(campaignId) {
   try {
-    const { rows } = await db.query(
-      `SELECT
-        hc.titulo,
-        COUNT(*) as total,
-        SUM(CASE WHEN hd.status = 'enviado' THEN 1 ELSE 0 END) as enviado,
-        SUM(CASE WHEN hd.status = 'entregue' THEN 1 ELSE 0 END) as entregue,
-        SUM(CASE WHEN hd.status = 'lido' THEN 1 ELSE 0 END) as lido,
-        SUM(CASE WHEN hd.status = 'erro' THEN 1 ELSE 0 END) as erro
-      FROM hub_campanhas hc
-      LEFT JOIN hub_disparos hd ON hc.id = hd.campanha_id
-      WHERE hc.id = $1
-      GROUP BY hc.id, hc.titulo`,
-      [campaignId]
-    );
+    // Get campaign info
+    const { data: campaign, error: campaignError } = await supabase
+      .from('hub_campanhas')
+      .select('id, titulo')
+      .eq('id', campaignId)
+      .single();
 
-    return rows[0] || null;
+    if (campaignError) throw campaignError;
+    if (!campaign) return null;
+
+    // Get disparo counts grouped by status
+    const { data: disparos, error: disparosError } = await supabase
+      .from('hub_disparos')
+      .select('status')
+      .eq('campanha_id', campaignId);
+
+    if (disparosError) throw disparosError;
+
+    const counts = { enviado: 0, entregue: 0, lido: 0, erro: 0 };
+    for (const d of disparos || []) {
+      if (counts[d.status] !== undefined) counts[d.status]++;
+    }
+
+    return {
+      titulo: campaign.titulo,
+      total: (disparos || []).length,
+      enviado: counts.enviado,
+      entregue: counts.entregue,
+      lido: counts.lido,
+      erro: counts.erro,
+    };
   } catch (error) {
     console.error(
       `[CAMPAIGN] Error getting status: ${error.message}`,

@@ -1,4 +1,4 @@
-const db = require('../database/connection').default;
+const { supabase } = require('../database/connection');
 
 /**
  * Handle MESSAGES_UPDATE webhook events from Evolution API
@@ -9,77 +9,51 @@ async function handleMessagesUpdate(payload) {
     const { data } = payload;
     const { messageId, messageStatus } = data;
 
-    // Log the incoming event
     console.info(`[WEBHOOK] Processing MESSAGES_UPDATE: messageId=${messageId}, status=${messageStatus}`);
 
     // Map Evolution status to Hub status
-    let hubStatus, updateQuery, updateParams;
+    let updateData;
 
     switch (messageStatus) {
       case 'sent':
-        hubStatus = 'enviado';
-        updateQuery = `
-          UPDATE hub_disparos
-          SET status = $1
-          WHERE evolution_message_id = $2
-          RETURNING id
-        `;
-        updateParams = [hubStatus, messageId];
+        updateData = { status: 'enviado' };
         break;
-
       case 'delivered':
-        hubStatus = 'entregue';
-        updateQuery = `
-          UPDATE hub_disparos
-          SET status = $1, entregue_at = NOW()
-          WHERE evolution_message_id = $2
-          RETURNING id
-        `;
-        updateParams = [hubStatus, messageId];
+        updateData = { status: 'entregue', entregue_at: new Date().toISOString() };
         break;
-
       case 'read':
-        hubStatus = 'lido';
-        updateQuery = `
-          UPDATE hub_disparos
-          SET status = $1, lido_at = NOW()
-          WHERE evolution_message_id = $2
-          RETURNING id
-        `;
-        updateParams = [hubStatus, messageId];
+        updateData = { status: 'lido', lido_at: new Date().toISOString() };
         break;
-
       case 'error':
-        hubStatus = 'erro';
-        updateQuery = `
-          UPDATE hub_disparos
-          SET status = $1, erro_msg = $2
-          WHERE evolution_message_id = $3
-          RETURNING id
-        `;
-        updateParams = [hubStatus, 'Evolution reported error', messageId];
+        updateData = { status: 'erro', erro_msg: 'Evolution reported error' };
         break;
-
       case 'pending':
-        // No update needed for pending status
         console.info(`[WEBHOOK] Ignoring pending status for messageId=${messageId}`);
         return;
-
       default:
         console.warn(`[WEBHOOK] Unknown messageStatus: ${messageStatus}`);
         return;
     }
 
-    // Execute update
-    const result = await db.query(updateQuery, updateParams);
+    // Execute update via Supabase
+    const { data: updated, error } = await supabase
+      .from('hub_disparos')
+      .update(updateData)
+      .eq('evolution_message_id', messageId)
+      .select('id');
 
-    if (result.rows.length === 0) {
+    if (error) {
+      console.error(`[WEBHOOK] DB error updating disparo: ${error.message}`);
+      return;
+    }
+
+    if (!updated || updated.length === 0) {
       console.warn(`[WEBHOOK] No disparo found for evolution_message_id: ${messageId}`);
       return;
     }
 
     console.info(
-      `[WEBHOOK] Successfully updated disparo (id=${result.rows[0].id}) status to "${hubStatus}"`
+      `[WEBHOOK] Updated disparo (id=${updated[0].id}) status to "${updateData.status}"`
     );
   } catch (error) {
     console.error(`[WEBHOOK] Error processing MESSAGES_UPDATE: ${error.message}`, error);
@@ -96,11 +70,10 @@ async function handleConnectionUpdate(payload) {
     const { data } = payload;
     const { instanceName, status } = data;
 
-    // Log the incoming event
     console.info(`[WEBHOOK] Processing CONNECTION_UPDATE: instanceName=${instanceName}, status=${status}`);
 
     // Extract clientId from instanceName format: "hub_${clienteId}"
-    const match = instanceName.match(/^hub_(\d+)$/);
+    const match = instanceName && instanceName.match(/^hub_(\d+)$/);
     if (!match) {
       console.warn(`[WEBHOOK] Invalid instanceName format: ${instanceName}`);
       return;
@@ -122,23 +95,25 @@ async function handleConnectionUpdate(payload) {
         return;
     }
 
-    // Execute update
-    const updateQuery = `
-      UPDATE hub_clientes
-      SET whatsapp_status = $1
-      WHERE id = $2
-      RETURNING id
-    `;
+    // Execute update via Supabase
+    const { data: updated, error } = await supabase
+      .from('hub_clientes')
+      .update({ whatsapp_status: hubStatus })
+      .eq('id', clientId)
+      .select('id');
 
-    const result = await db.query(updateQuery, [hubStatus, clientId]);
+    if (error) {
+      console.error(`[WEBHOOK] DB error updating cliente: ${error.message}`);
+      return;
+    }
 
-    if (result.rows.length === 0) {
+    if (!updated || updated.length === 0) {
       console.warn(`[WEBHOOK] No cliente found with id: ${clientId}`);
       return;
     }
 
     console.info(
-      `[WEBHOOK] Successfully updated cliente (id=${clientId}) whatsapp_status to "${hubStatus}"`
+      `[WEBHOOK] Updated cliente (id=${clientId}) whatsapp_status to "${hubStatus}"`
     );
   } catch (error) {
     console.error(
@@ -158,7 +133,6 @@ async function webhook(request, reply) {
   try {
     const payload = request.body;
 
-    // Log webhook receipt
     console.info(`[WEBHOOK] Received webhook event: ${payload.event}`);
 
     // Return 200 OK immediately (fire-and-forget pattern)
@@ -174,7 +148,6 @@ async function webhook(request, reply) {
     }
   } catch (error) {
     console.error(`[WEBHOOK] Unhandled error in webhook receiver: ${error.message}`, error);
-    // Still return 200 OK since we've already sent response
   }
 }
 
