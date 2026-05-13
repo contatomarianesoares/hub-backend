@@ -95,7 +95,7 @@ async function getCampaignStatus(campaignId) {
     // Get campaign info
     const { data: campaign, error: campaignError } = await supabase
       .from('hub_campanhas')
-      .select('id, titulo')
+      .select('id, nome, status')
       .eq('id', campaignId)
       .single();
 
@@ -116,7 +116,8 @@ async function getCampaignStatus(campaignId) {
     }
 
     return {
-      titulo: campaign.titulo,
+      nome: campaign.nome,
+      status: campaign.status,
       total: (disparos || []).length,
       enviado: counts.enviado,
       entregue: counts.entregue,
