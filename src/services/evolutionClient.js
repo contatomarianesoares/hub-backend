@@ -1,4 +1,4 @@
-const axios = require('axios');
+import axios from 'axios';
 
 /**
  * Evolution API client
@@ -78,8 +78,109 @@ async function getInstanceStatus(clientId) {
   }
 }
 
-module.exports = {
+/**
+ * Create a new WhatsApp instance on Evolution API
+ * @param {Object} options
+ * @param {number} options.clientId - Hub client ID
+ * @returns {Promise<Object>} Response from Evolution API
+ */
+async function createInstance({ clientId }) {
+  try {
+    const instanceName = `hub_${clientId}`;
+    console.info(`[EVOLUTION] Creating instance: ${instanceName}`);
+
+    const response = await evolutionClient.post(`/instance/create`, {
+      instanceName,
+      token: process.env.EVOLUTION_API_TOKEN || 'webhook_token',
+      qrcode: true,
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error(`[EVOLUTION] Error creating instance: ${error.message}`, error);
+    throw error;
+  }
+}
+
+/**
+ * List all instances on Evolution API
+ * @returns {Promise<Object>} List of instances
+ */
+async function listInstances() {
+  try {
+    console.info('[EVOLUTION] Listing all instances');
+    const response = await evolutionClient.get(`/instance/list`);
+    return response.data;
+  } catch (error) {
+    console.error(`[EVOLUTION] Error listing instances: ${error.message}`, error);
+    throw error;
+  }
+}
+
+/**
+ * Register webhook for an instance
+ * @param {Object} options
+ * @param {number} options.clientId - Hub client ID
+ * @param {string} options.webhookUrl - Webhook URL
+ * @param {Array<string>} options.events - Events to receive
+ * @returns {Promise<Object>} Response from Evolution API
+ */
+async function registerWebhook({ clientId, webhookUrl, events = [] }) {
+  try {
+    const instanceName = `hub_${clientId}`;
+    console.info(`[EVOLUTION] Registering webhook for ${instanceName}: ${webhookUrl}`);
+
+    const response = await evolutionClient.post(`/webhook/save/${instanceName}`, {
+      url: webhookUrl,
+      events: events.length > 0 ? events : ['MESSAGES_UPDATE', 'CONNECTION_UPDATE'],
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error(`[EVOLUTION] Error registering webhook: ${error.message}`, error);
+    throw error;
+  }
+}
+
+/**
+ * Update webhook configuration for an instance
+ * @param {Object} options
+ * @param {number} options.clientId - Hub client ID
+ * @param {string} options.webhookUrl - New webhook URL
+ * @returns {Promise<Object>} Response from Evolution API
+ */
+async function updateWebhook({ clientId, webhookUrl }) {
+  try {
+    const instanceName = `hub_${clientId}`;
+    console.info(`[EVOLUTION] Updating webhook for ${instanceName}: ${webhookUrl}`);
+
+    const response = await evolutionClient.put(`/webhook/save/${instanceName}`, {
+      url: webhookUrl,
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error(`[EVOLUTION] Error updating webhook: ${error.message}`, error);
+    throw error;
+  }
+}
+
+export default {
   enviarTexto,
   getInstanceStatus,
+  createInstance,
+  listInstances,
+  registerWebhook,
+  updateWebhook,
+  evolutionClient,
+};
+
+export {
+  enviarTexto,
+  getInstanceStatus,
+  createInstance,
+  listInstances,
+  registerWebhook,
+  updateWebhook,
   evolutionClient,
 };

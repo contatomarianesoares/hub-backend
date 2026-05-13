@@ -1,5 +1,7 @@
-const db = require('../database/connection').default;
-const { enviarTexto } = require('../services/evolutionClient');
+import db from '../database/connection.js';
+import { enviarTexto } from '../services/evolutionClient.js';
+
+const dbInstance = db.default;
 
 /**
  * Process message sends and store Evolution message ID for webhook tracking
@@ -31,7 +33,7 @@ async function processMessageSend(disparoId, clientId, telefone, mensagem) {
         RETURNING id
       `;
 
-      const result = await db.query(updateQuery, [evolution_message_id, disparoId]);
+      const result = await dbInstance.query(updateQuery, [evolution_message_id, disparoId]);
 
       if (result.rows.length === 0) {
         console.warn(`[WORKER] Could not find disparo ${disparoId} to update evolution_message_id`);
@@ -89,7 +91,5 @@ async function processBatch(disparos) {
   }
 }
 
-module.exports = {
-  processMessageSend,
-  processBatch,
-};
+export { processMessageSend, processBatch };
+export default { processMessageSend, processBatch };
