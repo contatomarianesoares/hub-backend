@@ -3,6 +3,7 @@ require('dotenv').config();
 const Fastify = require('fastify');
 const cors = require('@fastify/cors');
 const webhooksRouter = require('./routes/webhooks');
+const campaignsRouter = require('./routes/campaigns');
 
 // Initialize Fastify instance
 const fastify = Fastify({
@@ -18,6 +19,10 @@ fastify.register(cors, {
 
 // Register webhook route
 fastify.post('/webhooks/evolution', webhooksRouter.webhook);
+
+// Register campaign routes
+fastify.post('/campaigns/:id/send', campaignsRouter.sendCampaign);
+fastify.get('/campaigns/:id/status', campaignsRouter.getCampaignStatus);
 
 // Health check endpoint
 fastify.get('/health', async (request, reply) => {
