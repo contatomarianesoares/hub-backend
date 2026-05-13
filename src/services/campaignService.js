@@ -1,5 +1,5 @@
-import db from '../database/connection.js';
-import evolution from './evolutionClient.js';
+const db = require('../database/connection').default;
+const evolution = require('./evolutionClient');
 
 /**
  * Send a campaign to all recipients
@@ -105,7 +105,7 @@ async function getCampaignStatus(campaignId) {
   }
 }
 
-export default {
+module.exports = {
   sendCampaign,
   getCampaignStatus,
 };

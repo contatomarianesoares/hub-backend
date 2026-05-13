@@ -1,4 +1,4 @@
-import axios from 'axios';
+const axios = require('axios');
 
 /**
  * Evolution API client
@@ -165,17 +165,7 @@ async function updateWebhook({ clientId, webhookUrl }) {
   }
 }
 
-export default {
-  enviarTexto,
-  getInstanceStatus,
-  createInstance,
-  listInstances,
-  registerWebhook,
-  updateWebhook,
-  evolutionClient,
-};
-
-export {
+module.exports = {
   enviarTexto,
   getInstanceStatus,
   createInstance,
