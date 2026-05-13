@@ -47,7 +47,7 @@ fastify.get('/health', async (request, reply) => {
 
 // Hub health endpoint
 fastify.get('/hub-health', async (request, reply) => {
-  return { status: 'ok', timestamp: new Date().toISOString() };
+  return { status: 'ok', version: 'v2-commonjs-fix', timestamp: new Date().toISOString() };
 });
 
 // Start server
