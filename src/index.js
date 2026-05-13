@@ -24,8 +24,29 @@ fastify.post('/webhooks/evolution', webhooksRouter.webhook);
 fastify.post('/campaigns/:id/send', campaignsRouter.sendCampaign);
 fastify.get('/campaigns/:id/status', campaignsRouter.getCampaignStatus);
 
+// Root endpoint - API info
+fastify.get('/', async (request, reply) => {
+  return {
+    name: 'Hub Backend',
+    version: '1.0.0',
+    description: 'JuriAlvo WhatsApp Campaign Management Hub',
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/health',
+      webhooks: '/webhooks/evolution',
+      campaigns: '/campaigns/:id/send, /campaigns/:id/status',
+    },
+  };
+});
+
 // Health check endpoint
 fastify.get('/health', async (request, reply) => {
+  return { status: 'ok', timestamp: new Date().toISOString() };
+});
+
+// Hub health endpoint
+fastify.get('/hub-health', async (request, reply) => {
   return { status: 'ok', timestamp: new Date().toISOString() };
 });
 
