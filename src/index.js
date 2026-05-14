@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import webhooksRouter from './routes/webhooks.js';
 import instanciasRouter from './routes/instancias.js';
+import authRouter from './routes/auth.js';
 import authMiddleware from './middleware/auth.js';
 
 const fastify = Fastify({
@@ -14,6 +15,8 @@ const fastify = Fastify({
 fastify.register(cors, {
   origin: true,
 });
+
+fastify.post('/auth/login', authRouter.login);
 
 fastify.post('/webhooks/evolution', webhooksRouter.webhook);
 

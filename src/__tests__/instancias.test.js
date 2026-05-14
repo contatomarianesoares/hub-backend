@@ -19,10 +19,18 @@ vi.mock('../middleware/auth.js', () => ({
   },
 }));
 
+vi.mock('../services/evolutionClient.js', () => ({
+  default: {
+    getInstanceStatus: vi.fn(),
+  },
+}));
+
 const instancias = await import('../routes/instancias.js');
 const dbModule = await import('../database/connection.js');
+const evolutionModule = await import('../services/evolutionClient.js');
 
 const db = dbModule.default;
+const evo = evolutionModule.default;
 
 describe('Instâncias Routes - Disconnect Endpoint', () => {
   beforeEach(() => {
@@ -267,6 +275,171 @@ describe('Instâncias Routes - Disconnect Endpoint', () => {
       expect(mockReply.send).toHaveBeenCalledWith(
         expect.objectContaining({
           erro: expect.stringContaining('Erro ao desconectar'),
+        })
+      );
+    });
+  });
+
+  describe('GET /instancias/qr', () => {
+    it('should return conectado: true when instance state is open', async () => {
+      const mockRequest = {
+        usuario: {
+          id: 'cliente-1',
+          cliente_id: 1,
+        },
+      };
+
+      const mockReply = {
+        status: vi.fn(() => mockReply),
+        send: vi.fn(),
+        code: vi.fn(() => mockReply),
+      };
+
+      db.query.mockResolvedValueOnce({
+        rows: [{ id: 1, evolution_instance_id: 'hub_1' }],
+      });
+
+      evo.getInstanceStatus.mockResolvedValueOnce({
+        instance: { instanceName: 'hub_1' },
+        state: 'open',
+      });
+
+      const handler = instancias.default.obterQR;
+      await handler(mockRequest, mockReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conectado: true,
+          status: 'conectado',
+          instanceName: 'hub_1',
+        })
+      );
+      expect(mockReply.status).not.toHaveBeenCalled();
+    });
+
+    it('should return QR code when instance is not connected', async () => {
+      const mockRequest = {
+        usuario: {
+          id: 'cliente-1',
+          cliente_id: 1,
+        },
+      };
+
+      const mockReply = {
+        status: vi.fn(() => mockReply),
+        send: vi.fn(),
+        code: vi.fn(() => mockReply),
+      };
+
+      db.query.mockResolvedValueOnce({
+        rows: [{ id: 1, evolution_instance_id: 'hub_1' }],
+      });
+
+      evo.getInstanceStatus.mockResolvedValueOnce({
+        instance: { instanceName: 'hub_1' },
+        state: 'disconnected',
+        qrcode: {
+          base64: 'data:image/png;base64,iVBORw0KGgo...',
+        },
+      });
+
+      const handler = instancias.default.obterQR;
+      await handler(mockRequest, mockReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conectado: false,
+          qr: 'data:image/png;base64,iVBORw0KGgo...',
+          qrcode: 'data:image/png;base64,iVBORw0KGgo...',
+          instanceName: 'hub_1',
+        })
+      );
+      expect(mockReply.status).not.toHaveBeenCalled();
+    });
+
+    it('should return 404 when cliente not found', async () => {
+      const mockRequest = {
+        usuario: {
+          id: 'cliente-1',
+          cliente_id: 999,
+        },
+      };
+
+      const mockReply = {
+        status: vi.fn(() => mockReply),
+        send: vi.fn(),
+        code: vi.fn(() => mockReply),
+      };
+
+      db.query.mockResolvedValueOnce({
+        rows: [],
+      });
+
+      const handler = instancias.default.obterQR;
+      await handler(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          erro: expect.stringContaining('Cliente não encontrado'),
+        })
+      );
+    });
+
+    it('should handle Evolution API errors gracefully', async () => {
+      const mockRequest = {
+        usuario: {
+          id: 'cliente-1',
+          cliente_id: 1,
+        },
+      };
+
+      const mockReply = {
+        status: vi.fn(() => mockReply),
+        send: vi.fn(),
+        code: vi.fn(() => mockReply),
+      };
+
+      db.query.mockResolvedValueOnce({
+        rows: [{ id: 1, evolution_instance_id: 'hub_1' }],
+      });
+
+      evo.getInstanceStatus.mockRejectedValueOnce(new Error('Evolution API error'));
+
+      const handler = instancias.default.obterQR;
+      await handler(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(500);
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          erro: expect.stringContaining('Erro ao obter QR code'),
+        })
+      );
+    });
+
+    it('should handle database errors gracefully', async () => {
+      const mockRequest = {
+        usuario: {
+          id: 'cliente-1',
+          cliente_id: 1,
+        },
+      };
+
+      const mockReply = {
+        status: vi.fn(() => mockReply),
+        send: vi.fn(),
+        code: vi.fn(() => mockReply),
+      };
+
+      db.query.mockRejectedValueOnce(new Error('Database connection failed'));
+
+      const handler = instancias.default.obterQR;
+      await handler(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(500);
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          erro: expect.stringContaining('Erro ao obter QR code'),
         })
       );
     });
