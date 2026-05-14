@@ -1,4 +1,5 @@
 import db from '../database/connection.js';
+import evo from '../services/evolutionClient.js';
 
 async function desconectar(request, reply) {
   try {
@@ -48,6 +49,50 @@ async function desconectar(request, reply) {
   }
 }
 
+async function obterQR(request, reply) {
+  try {
+    const usuario = request.usuario;
+
+    // Get cliente info
+    const { rows: clientes } = await db.query(
+      'SELECT id, evolution_instance_id FROM hub_clientes WHERE id = $1',
+      [usuario.cliente_id]
+    );
+
+    if (clientes.length === 0) {
+      return reply.status(404).send({ erro: 'Cliente não encontrado' });
+    }
+
+    const cliente = clientes[0];
+    const instanceId = cliente.evolution_instance_id;
+
+    // Get instance status from Evolution API
+    const instanceStatus = await evo.getInstanceStatus(usuario.cliente_id);
+
+    // If connected, return status
+    if (instanceStatus?.state === 'open') {
+      return reply.send({
+        conectado: true,
+        status: 'conectado',
+        instanceName: instanceId,
+      });
+    }
+
+    // If not connected, return QR code
+    const qrBase64 = instanceStatus?.qrcode?.base64;
+    return reply.send({
+      conectado: false,
+      qr: qrBase64,
+      qrcode: qrBase64, // compatibility
+      instanceName: instanceId,
+    });
+  } catch (error) {
+    console.error(`[Instâncias] Erro ao obter QR code: ${error.message}`, error);
+    return reply.status(500).send({ erro: `Erro ao obter QR code: ${error.message}` });
+  }
+}
+
 export default {
   desconectar,
+  obterQR,
 };

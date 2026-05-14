@@ -21,6 +21,10 @@ fastify.post('/instancias/desconectar', {
   preHandler: authMiddleware.autenticar,
 }, instanciasRouter.desconectar);
 
+fastify.get('/instancias/qr', {
+  preHandler: authMiddleware.autenticar,
+}, instanciasRouter.obterQR);
+
 fastify.get('/health', async (request, reply) => {
   return { status: 'ok', timestamp: new Date().toISOString() };
 });
