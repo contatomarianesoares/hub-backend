@@ -1,9 +1,5 @@
-const { supabase } = require('../database/connection');
+import db from '../database/connection.js';
 
-/**
- * Handle MESSAGES_UPDATE webhook events from Evolution API
- * Updates hub_disparos message status based on Evolution's status
- */
 async function handleMessagesUpdate(payload) {
   try {
     const { data } = payload;
@@ -11,64 +7,77 @@ async function handleMessagesUpdate(payload) {
 
     console.info(`[WEBHOOK] Processing MESSAGES_UPDATE: messageId=${messageId}, status=${messageStatus}`);
 
-    // Map Evolution status to Hub status
-    let updateData;
+    let hubStatus, updateQuery, updateParams;
 
-    // hub_disparos valid statuses: pendente, enviado, erro
-    // Map Evolution statuses to hub statuses
     switch (messageStatus) {
-      case 'DELIVERY_ACK':
-      case 'delivered':
       case 'sent':
-        updateData = { status: 'enviado' };
+        hubStatus = 'enviado';
+        updateQuery = `
+          UPDATE hub_disparos
+          SET status = $1
+          WHERE evolution_message_id = $2
+          RETURNING id
+        `;
+        updateParams = [hubStatus, messageId];
         break;
-      case 'READ':
+
+      case 'delivered':
+        hubStatus = 'entregue';
+        updateQuery = `
+          UPDATE hub_disparos
+          SET status = $1, entregue_at = NOW()
+          WHERE evolution_message_id = $2
+          RETURNING id
+        `;
+        updateParams = [hubStatus, messageId];
+        break;
+
       case 'read':
-        updateData = { status: 'enviado' }; // mark as enviado (READ is a bonus update)
+        hubStatus = 'lido';
+        updateQuery = `
+          UPDATE hub_disparos
+          SET status = $1, lido_at = NOW()
+          WHERE evolution_message_id = $2
+          RETURNING id
+        `;
+        updateParams = [hubStatus, messageId];
         break;
-      case 'ERROR':
+
       case 'error':
-        updateData = { status: 'erro', erro_msg: 'Evolution reported error' };
+        hubStatus = 'erro';
+        updateQuery = `
+          UPDATE hub_disparos
+          SET status = $1, erro_msg = $2
+          WHERE evolution_message_id = $3
+          RETURNING id
+        `;
+        updateParams = [hubStatus, 'Evolution reported error', messageId];
         break;
-      case 'PENDING':
+
       case 'pending':
         console.info(`[WEBHOOK] Ignoring pending status for messageId=${messageId}`);
         return;
+
       default:
         console.warn(`[WEBHOOK] Unknown messageStatus: ${messageStatus}`);
         return;
     }
 
-    // Execute update via Supabase
-    const { data: updated, error } = await supabase
-      .from('hub_disparos')
-      .update(updateData)
-      .eq('evolution_message_id', messageId)
-      .select('id');
+    const result = await db.query(updateQuery, updateParams);
 
-    if (error) {
-      console.error(`[WEBHOOK] DB error updating disparo: ${error.message}`);
-      return;
-    }
-
-    if (!updated || updated.length === 0) {
+    if (result.rows.length === 0) {
       console.warn(`[WEBHOOK] No disparo found for evolution_message_id: ${messageId}`);
       return;
     }
 
     console.info(
-      `[WEBHOOK] Updated disparo (id=${updated[0].id}) status to "${updateData.status}"`
+      `[WEBHOOK] Successfully updated disparo (id=${result.rows[0].id}) status to "${hubStatus}"`
     );
   } catch (error) {
     console.error(`[WEBHOOK] Error processing MESSAGES_UPDATE: ${error.message}`, error);
-    // Don't throw - webhook receiver returns 200 OK regardless
   }
 }
 
-/**
- * Handle CONNECTION_UPDATE webhook events from Evolution API
- * Updates hub_clientes WhatsApp connection status
- */
 async function handleConnectionUpdate(payload) {
   try {
     const { data } = payload;
@@ -76,8 +85,7 @@ async function handleConnectionUpdate(payload) {
 
     console.info(`[WEBHOOK] Processing CONNECTION_UPDATE: instanceName=${instanceName}, status=${status}`);
 
-    // Extract clientId from instanceName format: "hub_${clienteId}"
-    const match = instanceName && instanceName.match(/^hub_(\d+)$/);
+    const match = instanceName.match(/^hub_(\d+)$/);
     if (!match) {
       console.warn(`[WEBHOOK] Invalid instanceName format: ${instanceName}`);
       return;
@@ -85,7 +93,6 @@ async function handleConnectionUpdate(payload) {
 
     const clientId = parseInt(match[1], 10);
 
-    // Map Evolution status to Hub status
     let hubStatus;
     switch (status) {
       case 'open':
@@ -99,50 +106,39 @@ async function handleConnectionUpdate(payload) {
         return;
     }
 
-    // Execute update via Supabase
-    const { data: updated, error } = await supabase
-      .from('hub_clientes')
-      .update({ whatsapp_status: hubStatus })
-      .eq('id', clientId)
-      .select('id');
+    const updateQuery = `
+      UPDATE hub_clientes
+      SET whatsapp_status = $1
+      WHERE id = $2
+      RETURNING id
+    `;
 
-    if (error) {
-      console.error(`[WEBHOOK] DB error updating cliente: ${error.message}`);
-      return;
-    }
+    const result = await db.query(updateQuery, [hubStatus, clientId]);
 
-    if (!updated || updated.length === 0) {
+    if (result.rows.length === 0) {
       console.warn(`[WEBHOOK] No cliente found with id: ${clientId}`);
       return;
     }
 
     console.info(
-      `[WEBHOOK] Updated cliente (id=${clientId}) whatsapp_status to "${hubStatus}"`
+      `[WEBHOOK] Successfully updated cliente (id=${clientId}) whatsapp_status to "${hubStatus}"`
     );
   } catch (error) {
     console.error(
       `[WEBHOOK] Error processing CONNECTION_UPDATE: ${error.message}`,
       error
     );
-    // Don't throw - webhook receiver returns 200 OK regardless
   }
 }
 
-/**
- * Main webhook endpoint handler
- * POST /webhooks/evolution
- * Receives Evolution API webhook events and processes them asynchronously
- */
 async function webhook(request, reply) {
   try {
     const payload = request.body;
 
     console.info(`[WEBHOOK] Received webhook event: ${payload.event}`);
 
-    // Return 200 OK immediately (fire-and-forget pattern)
     reply.status(200).send({ success: true });
 
-    // Process webhook asynchronously
     if (payload.event === 'MESSAGES_UPDATE') {
       await handleMessagesUpdate(payload);
     } else if (payload.event === 'CONNECTION_UPDATE') {
@@ -155,7 +151,7 @@ async function webhook(request, reply) {
   }
 }
 
-module.exports = {
+export default {
   webhook,
   handleMessagesUpdate,
   handleConnectionUpdate,

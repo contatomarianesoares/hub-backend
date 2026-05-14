@@ -1,20 +1,37 @@
-const { createClient } = require('@supabase/supabase-js');
-const ws = require('ws');
+import { createClient } from '@supabase/supabase-js';
 
-// Supabase connection configuration
 const supabaseUrl = process.env.SUPABASE_URL;
-// Use service role key if it's a real JWT (starts with "eyJ"), otherwise fall back to anon key
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const supabaseKey = (serviceKey.startsWith('eyJ') ? serviceKey : null) || process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
-// Supabase client
 const supabase = createClient(supabaseUrl, supabaseKey, {
-  realtime: {
-    transport: ws,
-  },
   db: {
     schema: 'public',
   },
+  headers: {
+    'Accept-Profile': 'public',
+  },
+  global: {
+    headers: {
+      'Connection': 'keep-alive',
+    },
+  },
 });
 
-module.exports = { default: supabase, supabase };
+const db = {
+  async query(text, values = []) {
+    try {
+      const { data, error } = await supabase.rpc('execute_query', {
+        query_text: text,
+        query_params: values,
+      });
+
+      if (error) throw error;
+      return { rows: data || [] };
+    } catch (error) {
+      console.error('Database query error:', error);
+      throw error;
+    }
+  },
+};
+
+export default db;
