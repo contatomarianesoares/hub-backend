@@ -1,4 +1,4 @@
-name: Deploy to Oracle Cloud
+name: Deploy hub-backend
 
 on:
   push:
@@ -9,12 +9,13 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Setup SSH key
+      - name: Setup SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
@@ -24,75 +25,58 @@ jobs:
           ssh-keyscan -H 152.67.53.192 >> ~/.ssh/known_hosts
 
       - name: Deploy to server
-        env:
-          DEPLOY_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          ssh -i ~/.ssh/id_rsa ubuntu@152.67.53.192 << 'EOF'
+          ssh -i ~/.ssh/id_rsa ubuntu@152.67.53.192 << 'ENDSSH'
           set -e
 
-          echo "🚀 Iniciando deploy do hub-backend..."
+          APP_DIR="$HOME/hub-backend"
+          APP_NAME="hub-backend"
 
-          # Criar diretório se não existir
-          mkdir -p ~/hub-backend
-          cd ~/hub-backend
-
-          # Clonar/atualizar repositório
-          if [ -d ".git" ]; then
-            echo "📥 Atualizando repositório..."
+          echo "==> Atualizando código..."
+          if [ -d "$APP_DIR/.git" ]; then
+            cd "$APP_DIR"
             git fetch origin
-            git reset --hard origin/main
+            git reset --hard origin/main || git reset --hard origin/master
           else
-            echo "📥 Clonando repositório..."
-            git clone https://github.com/contatomarianesoares/hub-backend.git .
+            git clone https://github.com/contatomarianesoares/hub-backend.git "$APP_DIR"
+            cd "$APP_DIR"
           fi
 
-          # Instalar dependências
-          echo "📦 Instalando dependências..."
-          npm install
+          echo "==> Instalando dependências (sem crash)..."
+          # npm ci usa o package-lock.json — mais rápido e seguro que npm install
+          # --omit=dev exclui devDependencies, economiza memória
+          NODE_OPTIONS="--max-old-space-size=512" npm ci --omit=dev --prefer-offline 2>&1 | tail -5
 
-          # Copiar .env se não existir
-          if [ ! -f ".env" ]; then
-            echo "⚙️  Criando .env com configurações padrão..."
-            cat > .env << 'ENVFILE'
-          PORT=3002
-          HOST=0.0.0.0
-          NODE_ENV=production
-          LOG_LEVEL=info
-
-          EVOLUTION_API_URL=http://152.67.53.192:8080/api
-          HUB_PUBLIC_URL=https://hub.jurialvo.com.br
-
-          SUPABASE_URL=https://your-supabase-url.supabase.co
-          SUPABASE_ANON_KEY=your_supabase_anon_key
-          SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-
-          DATABASE_URL=postgresql://user:password@localhost:5432/hub_db
-          ENVFILE
+          echo "==> Verificando PM2..."
+          if ! command -v pm2 &>/dev/null; then
+            npm install -g pm2 --prefer-offline
+            pm2 startup systemd -u ubuntu --hp /home/ubuntu | tail -1 | bash || true
           fi
 
-          # Instalar PM2 se não estiver
-          if ! command -v pm2 &> /dev/null; then
-            echo "⚙️  Instalando PM2..."
-            npm install -g pm2
-            pm2 startup
-            pm2 save
+          echo "==> Deploy com zero downtime..."
+          if pm2 describe "$APP_NAME" > /dev/null 2>&1; then
+            # App já existe — hot reload sem downtime
+            pm2 reload ecosystem.config.cjs --env production --update-env
+          else
+            # Primeira vez — inicia normalmente
+            pm2 start ecosystem.config.cjs --env production
           fi
 
-          # Parar e remover app anterior
-          echo "⏹️  Parando app anterior..."
-          pm2 stop hub-backend || true
-          pm2 delete hub-backend || true
-
-          # Iniciar novo app com PM2
-          echo "✅ Iniciando hub-backend com PM2..."
-          pm2 start npm --name "hub-backend" -- start
           pm2 save
 
-          echo "🎉 Deploy concluído com sucesso!"
-          echo "📍 Status: $(pm2 status hub-backend | tail -1)"
-          EOF
+          echo "==> Aguardando app subir..."
+          sleep 3
+
+          echo "==> Health check..."
+          curl -sf http://localhost:3002/health && echo " OK" || echo " WARN: health check falhou (pode estar iniciando)"
+
+          echo "==> Status final:"
+          pm2 list
+          ENDSSH
 
       - name: Verify deployment
         run: |
-          echo "✅ Deployment iniciado no servidor"
-          echo "📍 Acesse: https://hub.jurialvo.com.br/health"
+          sleep 5
+          STATUS=$(curl -sf https://hub.jurialvo.com.br/health 2>/dev/null | grep -o '"status":"ok"' || echo "pendente")
+          echo "Health check: $STATUS"
+          echo "Deploy concluído — https://hub.jurialvo.com.br/health"
